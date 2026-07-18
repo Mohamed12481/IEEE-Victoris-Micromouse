@@ -10,3 +10,8 @@
 #define WALL_WEST  (1 << 3) //  00001000 
 
 uint8_t maze_walls[MAZE_SIZE][MAZE_SIZE];
+
+int main()
+{
+    return 0;
+}
