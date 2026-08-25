@@ -23,6 +23,12 @@ typedef enum
     DIR_WEST = 3
 } enDirection;
 
+typedef enum {
+    STATE_EXPLORE_TO_GOAL,
+    STATE_RETURN_TO_START,
+    STATE_SPEED_RUN
+} enRobotState;
+
 typedef struct
 {
     uint8_t x;
@@ -54,6 +60,8 @@ void queue_init(Queue *q);
 bool queue_push(Queue *q, stPosition pos);
 stPosition queue_pop(Queue *q);
 bool queue_is_empty(Queue *q);
+
+uint8_t maze_get_distance(uint8_t x, uint8_t y);
 
 
 
