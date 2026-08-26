@@ -1,5 +1,14 @@
 #include <stdlib.h>
 #include "maze_solver.h"
+#include "robot_hal.h"
+
+void maze_save_to_flash(void) {
+    HAL_save_data_to_flash("maze_data", (uint8_t*)maze, sizeof(maze));
+}
+
+bool maze_load_from_flash(void) {
+    return HAL_load_data_from_flash("maze_data", (uint8_t*)maze, sizeof(maze));
+}
 
 static stCell maze[MAZE_SIZE][MAZE_SIZE];
 static Queue update_queue;

@@ -63,6 +63,9 @@ bool queue_is_empty(Queue *q);
 
 uint8_t maze_get_distance(uint8_t x, uint8_t y);
 
+void maze_save_to_flash(void);
+bool maze_load_from_flash(void);
+
 
 
 #endif

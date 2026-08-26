@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include "API.h"
 #include "maze_solver.h"
+#include "robot_hal.h"
 
 static void clear_simulator_colors(void) {
     printf("clearAllColor\n");
@@ -35,17 +36,37 @@ static void update_position(stPosition *pos, enDirection dir) {
 }
 
 int main(void) {
-    maze_init();
+    HAL_init();
 
     stPosition current_pos = {0, 0};
     enDirection current_dir = DIR_NORTH;
-    enRobotState current_state = STATE_EXPLORE_TO_GOAL;
+    enRobotState current_state;
 
     stPosition center_goals[4] = {{7, 7}, {7, 8}, {8, 7}, {8, 8}};
     stPosition start_goal[1]   = {{0, 0}};
 
-    API_setText(0, 0, "START");
-    API_setColor(0, 0, 'G'); 
+    uint8_t mode = HAL_get_dip_switch_mode();
+
+    if (mode == 1) {
+        if (maze_load_from_flash()) {
+            current_state = STATE_SPEED_RUN;
+            API_setColor(0, 0, 'R');
+        } else {
+            maze_init();
+            current_state = STATE_EXPLORE_TO_GOAL;
+            API_setColor(0, 0, 'G');
+        }
+    } else {
+        maze_init();
+        current_state = STATE_EXPLORE_TO_GOAL;
+        API_setColor(0, 0, 'G');
+    }
+
+    while (1) {
+        if (HAL_is_launch_button_pressed()) {
+            break;
+        }
+    }
 
     while (1) {
         bool wall_front = API_wallFront();
@@ -56,18 +77,19 @@ int main(void) {
         maze_update_wall(current_pos.x, current_pos.y, get_absolute_dir(current_dir, 1), wall_right);
         maze_update_wall(current_pos.x, current_pos.y, get_absolute_dir(current_dir, 3), wall_left);
 
-        char path_color = 'B'; 
+        char path_color = 'B';
 
         if (current_state == STATE_EXPLORE_TO_GOAL) {
-            path_color = 'B'; 
+            path_color = 'B';
             flood_fill_recalculate(center_goals, 4);
 
             if ((current_pos.x == 7 || current_pos.x == 8) && (current_pos.y == 7 || current_pos.y == 8)) {
+                maze_save_to_flash();
                 current_state = STATE_RETURN_TO_START;
                 clear_simulator_colors();
                 API_setText(current_pos.x, current_pos.y, "GOAL");
                 API_setColor(current_pos.x, current_pos.y, 'Y');
-                API_setColor(0, 0, 'G'); 
+                API_setColor(0, 0, 'G');
             }
         } 
         else if (current_state == STATE_RETURN_TO_START) {
@@ -75,8 +97,9 @@ int main(void) {
             flood_fill_recalculate(start_goal, 1);
 
             if (current_pos.x == 0 && current_pos.y == 0) {
+                maze_save_to_flash();
                 current_state = STATE_SPEED_RUN;
-                clear_simulator_colors(); 
+                clear_simulator_colors();
                 API_setText(0, 0, "READY");
                 API_setColor(0, 0, 'R');
                 
@@ -87,12 +110,12 @@ int main(void) {
             }
         } 
         else if (current_state == STATE_SPEED_RUN) {
-            path_color = 'G'; 
+            path_color = 'G';
             flood_fill_recalculate(center_goals, 4);
 
             if ((current_pos.x == 7 || current_pos.x == 8) && (current_pos.y == 7 || current_pos.y == 8)) {
                 API_setText(current_pos.x, current_pos.y, "WIN!");
-                break; 
+                break;
             }
         }
 
