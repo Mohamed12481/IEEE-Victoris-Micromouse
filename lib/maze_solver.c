@@ -2,16 +2,23 @@
 #include "maze_solver.h"
 #include "robot_hal.h"
 
+
+//static to prevent any out manipulation
+static stCell maze[MAZE_SIZE][MAZE_SIZE];
+static Queue update_queue;
+
+
 void maze_save_to_flash(void) {
     HAL_save_data_to_flash("maze_data", (uint8_t*)maze, sizeof(maze));
 }
+
 
 bool maze_load_from_flash(void) {
     return HAL_load_data_from_flash("maze_data", (uint8_t*)maze, sizeof(maze));
 }
 
-static stCell maze[MAZE_SIZE][MAZE_SIZE];
-static Queue update_queue;
+
+
 
 void queue_init(Queue *q)
 {
@@ -20,9 +27,11 @@ void queue_init(Queue *q)
     q->count = 0;
 } 
 
+
 bool queue_is_empty(Queue *q) {
     return q->count == 0;
 }
+
 
 bool queue_push(Queue *q, stPosition pos) {
     if (q->count >= QUEUE_MAX_SIZE) return false;
@@ -31,6 +40,7 @@ bool queue_push(Queue *q, stPosition pos) {
     q->count++;
     return true;
 }
+
 
 stPosition queue_pop(Queue *q) {
     stPosition empty = {0, 0};
@@ -41,18 +51,24 @@ stPosition queue_pop(Queue *q) {
     return pos;
 }
 
-void maze_init(void) {
-    queue_init(&update_queue);
 
+//maze initialization
+void maze_init(void) {
+    queue_init(&update_queue);//queue Initialization
+
+    //scanning the hole maze
     for (uint8_t x = 0; x < MAZE_SIZE; x++) {
         for (uint8_t y = 0; y < MAZE_SIZE; y++) {
+            //the robot didn't visit any cell, and suppose there is no walls untill the sensors get it
             maze[x][y].walls = 0;
             maze[x][y].visited = false;
-
+            
+            //calculate Manhattan Distance
             uint8_t dx = (x < 8) ? (7 - x) : (x - 8);
             uint8_t dy = (y < 8) ? (7 - y) : (y - 8);
             maze[x][y].distance = dx + dy;
-
+            
+            //make the outdoor walls
             if (y == MAZE_SIZE - 1) maze[x][y].walls |= WALL_NORTH;
             if (x == MAZE_SIZE - 1) maze[x][y].walls |= WALL_EAST;
             if (y == 0)             maze[x][y].walls |= WALL_SOUTH;
@@ -61,6 +77,8 @@ void maze_init(void) {
     }
 }
 
+
+//To update walls state when get data from senosrs
 void maze_update_wall(uint8_t x, uint8_t y, enDirection dir, bool wall_present) {
     if (!wall_present) return;
 
@@ -84,6 +102,8 @@ void maze_update_wall(uint8_t x, uint8_t y, enDirection dir, bool wall_present) 
     }
 }
 
+
+//get next move
 enDirection maze_get_next_move(stPosition current_pos, enDirection current_dir) {
     uint8_t min_dist = 255;
     enDirection best_dir = current_dir;
@@ -119,6 +139,8 @@ enDirection maze_get_next_move(stPosition current_pos, enDirection current_dir) 
     return best_dir;
 }
 
+
+//rebuild maze numbers after every update
 void flood_fill_recalculate(stPosition target_nodes[], uint8_t target_count) {
     for (uint8_t x = 0; x < MAZE_SIZE; x++) {
         for (uint8_t y = 0; y < MAZE_SIZE; y++) {
@@ -170,6 +192,7 @@ void flood_fill_recalculate(stPosition target_nodes[], uint8_t target_count) {
         }
     }
 }
+
 
 uint8_t maze_get_distance(uint8_t x, uint8_t y) {
     return maze[x][y].distance;
