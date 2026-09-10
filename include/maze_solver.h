@@ -18,6 +18,10 @@
 #define WALL_SOUTH (1 << 2)
 #define WALL_WEST (1 << 3)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 //Determine directions
 typedef enum
@@ -63,6 +67,8 @@ typedef struct
     bool visited;
 } stCell;
 
+extern stCell maze[MAZE_SIZE][MAZE_SIZE];
+
 
 void queue_init(Queue *q); //To make new queue
 bool queue_push(Queue *q, stPosition pos);// push cells at queue to check it
@@ -83,6 +89,10 @@ uint8_t maze_get_distance(uint8_t x, uint8_t y);// get cells number, use it at s
 void maze_save_to_flash(void);
 bool maze_load_from_flash(void);
 
+
+#ifdef __cplusplus
+}
+#endif
 
 //To prevent Redefinition Error
 #endif

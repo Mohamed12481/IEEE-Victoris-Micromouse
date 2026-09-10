@@ -3,8 +3,8 @@
 #include "robot_hal.h"
 
 
-//static to prevent any out manipulation
-static stCell maze[MAZE_SIZE][MAZE_SIZE];
+// بدون كلمة static وبدون كلمة extern (تعريف حقيقي عام)
+stCell maze[MAZE_SIZE][MAZE_SIZE];
 static Queue update_queue;
 
 
