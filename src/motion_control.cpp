@@ -1,75 +1,93 @@
 #include "robot_config.h"
 #include <Arduino.h>
 #include "hw_motors.h"
+#include "hw_sensors.h"
+#include "hw_safety.h"
 #include "logic_wall_detection.h"
+#include "maze_solver.h"
 
-// الثوابت الخاصة بالتحكم (يتم ضبطها في المعمل)
+// ثوابت التحكم للتوسيط بين الحوائط
 #define KP_WALL 0.5
 #define KD_WALL 0.1
 
-int last_error = 0;
+static int last_error = 0;
+extern enDirection current_dir; // جلب الاتجاه الحالي من main.cpp
 
 extern "C" {
 
-void move_forward_cell() {
-    encoder_reset(); // تم التعديل لتطابق hw_motors.h
-    int base_speed = 150;
+void execute_forward_step() {
+    encoder_reset();
+    unsigned long last_time = millis();
     
-    // تم التعديل لاستخدام دوال جلب الـ Ticks بدلاً من المتغيرات المباشرة
-    while ((encoder_get_left_ticks() + encoder_get_right_ticks()) / 2 < TICKS_PER_CELL) {
+    // التقدم لمسافة 175 مم (ترك هامش للقصور الذاتي)
+    while (motors_get_left_distance_mm() < 175.0f) {
+        if (safety_is_stopped()) { motors_stop(); while(1); }
         
-        // 1. قراءة الحساسات الجانبية
-        int left_dist = analogRead(IR_LEFT_RX_PIN);
-        int right_dist = analogRead(IR_RIGHT_RX_PIN);
+        // حساب الزمن الفعلي الدقيق للـ PID
+        unsigned long current_time = millis();
+        float dt = (current_time - last_time) / 1000.0f;
+        if (dt <= 0.0f) dt = 0.001f; 
+        last_time = current_time;
         
+        // قراءة الحساسات وحساب خطأ التوسيط
+        IRReadings ir = sensors_read_ir();
         int error = 0;
-        int delta_u = 0;
+        float delta_u = 0.0f;
         
-        // 2. حساب خطأ التوسيط باستخدام دالة is_wall_detected المتاحة لديكم
-        if (is_wall_detected(left_dist, IR_WALL_THRESHOLD_SIDE) && 
-            is_wall_detected(right_dist, IR_WALL_THRESHOLD_SIDE)) {
-            
-            error = left_dist - right_dist;
+        if (is_wall_detected(ir.left, IR_WALL_THRESHOLD_SIDE) && 
+            is_wall_detected(ir.right, IR_WALL_THRESHOLD_SIDE)) {
+            error = ir.left - ir.right;
             delta_u = (KP_WALL * error) + (KD_WALL * (error - last_error));
             last_error = error;
         }
 
-        // 3. تطبيق التصحيح على المواتير
-        int left_speed = base_speed - delta_u;
-        int right_speed = base_speed + delta_u;
+        // تطبيق السرعة الأساسية مضافاً إليها التصحيح
+        float base_speed = 150.0f; 
+        motors_set_speed_mm_s(base_speed - delta_u, base_speed + delta_u, dt);
         
-        motors_set_pwm(left_speed, right_speed);
+        // الحماية من الاصطدام الأمامي أثناء السرعة
+        if (ir.front > IR_CRITICAL_THRESHOLD) break;
         
-        // 4. حماية من الاصطدام الأمامي
-        if (analogRead(IR_FRONT_RX_PIN) > IR_CRITICAL_THRESHOLD) {
-            break; 
-        }
+        delay(5); // تفريغ المعالج لتجنب تعليق نظام الـ Watchdog
     }
     motors_stop();
+    delay(100); // استقرار ميكانيكي قبل الخلية التالية
 }
 
-void turn_robot(float angle_degrees) {
-    encoder_reset(); 
+void execute_turn(enDirection target_dir) {
+    if (current_dir == target_dir) return;
+
+    int diff = (target_dir - current_dir + 4) % 4;
+    float target_angle = 0.0f;
     
-    // حساب الـ Ticks المطلوبة للدوران
-    float angle_rad = angle_degrees * (PI / 180.0);
-    float arc_length = angle_rad * (WHEEL_BASE_MM / 2.0);
-    long target_ticks = arc_length / D_TICKS; 
+    if (diff == 1) target_angle = -90.0f;      // يمين
+    else if (diff == 3) target_angle = 90.0f;  // يسار
+    else if (diff == 2) target_angle = 180.0f; // للخلف (U-Turn)
+
+    sensors_reset_yaw(); 
+    unsigned long last_time = millis();
     
-    int turn_speed = 120;
-    
-    if (angle_degrees > 0) {
-        // دوران لليسار (مثلاً 90 درجة)
-        while (encoder_get_right_ticks() < target_ticks) {
-            motors_set_pwm(-turn_speed, turn_speed);
+    // الدوران مع خصم درجتين لتعويض القصور الذاتي الميكانيكي
+    while (abs(sensors_get_yaw()) < abs(target_angle) - 2.0f) {
+        if (safety_is_stopped()) { motors_stop(); while(1); }
+        
+        unsigned long current_time = millis();
+        float dt = (current_time - last_time) / 1000.0f;
+        if (dt <= 0.0f) dt = 0.001f;
+        last_time = current_time;
+        
+        sensors_update_yaw(dt); 
+        
+        if (target_angle < 0) {
+            motors_set_speed_mm_s(100.0f, -100.0f, dt);
+        } else {
+            motors_set_speed_mm_s(-100.0f, 100.0f, dt);
         }
-    } else {
-        // دوران لليمين (مثلاً -90 درجة)
-        while (encoder_get_left_ticks() < target_ticks) {
-            motors_set_pwm(turn_speed, -turn_speed);
-        }
+        delay(5);
     }
     motors_stop();
+    current_dir = target_dir;
+    delay(100);
 }
 
 } // end extern "C"

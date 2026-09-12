@@ -5,6 +5,7 @@
 #include "hw_sensors.h"
 #include "hw_safety.h"
 #include "logic_wall_detection.h"
+#include "motion_control.h"
 
 extern "C" {
     #include "maze_solver.h"
@@ -17,53 +18,6 @@ stPosition center_targets[] = {{7,7}, {7,8}, {8,7}, {8,8}};
 stPosition current_pos = {0, 0};
 enDirection current_dir = DIR_NORTH;
 
-// ==========================================================
-// دوال الحركة التنفيذية (The Actuators)
-// ==========================================================
-
-void execute_forward_step() {
-    encoder_reset();
-    // التقدم مسافة خلية كاملة (180 مم) مع ترك هامش بسيط للتوقف (مثلاً 175 مم)
-    while (motors_get_left_distance_mm() < 175.0f) {
-        if (safety_is_stopped()) { motors_stop(); while(1); } // حماية الطوارئ
-        
-        // سرعة ثابتة 150 مم/ث لكلتا العجلتين
-        motors_set_speed_mm_s(150.0f, 150.0f, 0.02f); 
-        delay(20);
-    }
-    motors_stop();
-    delay(100); // استقرار ميكانيكي قبل القراءة القادمة
-}
-
-void execute_turn(enDirection target_dir) {
-    if (current_dir == target_dir) return; // لا حاجة للدوران
-
-    int diff = (target_dir - current_dir + 4) % 4;
-    float target_angle = 0.0f;
-    
-    if (diff == 1) target_angle = -90.0f;      // يمين
-    else if (diff == 3) target_angle = 90.0f;  // يسار
-    else if (diff == 2) target_angle = 180.0f; // للخلف (U-Turn)
-
-    sensors_reset_yaw(); // تصفير البوصلة
-    
-    // الدوران حتى نصل للزاوية المطلوبة (باستخدام IMU)
-    while (abs(sensors_get_yaw()) < abs(target_angle) - 2.0f) { // خصم درجتين للقصور الذاتي
-        if (safety_is_stopped()) { motors_stop(); while(1); }
-        
-        sensors_update_yaw(0.02f); // dt = 20ms
-        
-        if (target_angle < 0) { // يمين
-            motors_set_speed_mm_s(100.0f, -100.0f, 0.02f);
-        } else { // يسار أو U-turn
-            motors_set_speed_mm_s(-100.0f, 100.0f, 0.02f);
-        }
-        delay(20);
-    }
-    motors_stop();
-    current_dir = target_dir;
-    delay(100);
-}
 
 // دالة مساعدة لتحديث الإحداثيات بعد الحركة
 void update_position_coordinates() {
