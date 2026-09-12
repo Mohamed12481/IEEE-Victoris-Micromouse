@@ -3,42 +3,25 @@
 #include <Preferences.h>//esp32 library to control memory
 
 
-//define pins to control robot states
-#define PIN_LAUNCH_BUTTON 13
-#define PIN_DIP_SWITCH_1  14
-#define PIN_DIP_SWITCH_2  27
-
-
 Preferences preferences;//make an object to control memory
 
 
 void HAL_init(void) {
     Serial.begin(115200);//open UART between robot and computer for debugging
     
-    pinMode(PIN_LAUNCH_BUTTON, INPUT_PULLUP);
-    pinMode(PIN_DIP_SWITCH_1, INPUT_PULLUP);
-    pinMode(PIN_DIP_SWITCH_2, INPUT_PULLUP);
-    
     Serial.println("[HAL] Hardware Initialized Successfully.");
 }
 
 
 bool HAL_is_launch_button_pressed(void) {
-    if (digitalRead(PIN_LAUNCH_BUTTON) == LOW) {
-        delay(50); 
-        if (digitalRead(PIN_LAUNCH_BUTTON) == LOW) {
-            return true;
-        }
-    }
-    return false;
+    // The schematic has no launch-button circuit. Do not reuse motor GPIOs.
+    return true;
 }
 
 
 uint8_t HAL_get_dip_switch_mode(void) {
-    uint8_t bit1 = (digitalRead(PIN_DIP_SWITCH_1) == LOW) ? 1 : 0;
-    uint8_t bit2 = (digitalRead(PIN_DIP_SWITCH_2) == LOW) ? 1 : 0;
-    
-    return (bit1 << 1) | bit2; 
+    // The schematic has no DIP-switch circuit. Default to search mode.
+    return 0;
 }
 
 

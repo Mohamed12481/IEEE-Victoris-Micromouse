@@ -2,13 +2,13 @@
 #define SAFETY_H
 
 // ==========================================================
-// زرار الطوارئ - بيوقف الروبوت فورًا عن طريق interrupt
-// بغض النظر عن أي حاجة تانية شغالة في الكود وقتها
+// No emergency-stop circuit is present in the hardware schematic.
 // ==========================================================
 
+// The schematic has no emergency-stop circuit, so this configures no GPIO.
 void safety_init();
 
-// بترجع true لو زرار الطوارئ اتضغط في أي وقت من وقت التشغيل
+// Always false while no hardware emergency-stop input is installed.
 bool safety_is_stopped();
 
 #endif 

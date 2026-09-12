@@ -3,6 +3,9 @@
 #include "logic_encoder.h"
 #include "logic_motors.h"
 
+static PIDController pid_left;
+static PIDController pid_right;
+
 // ==========================================================
 // إعدادات PWM (ESP32 LEDC) - عدّل القنوات لو بتستخدمها لحاجة تانية
 // ==========================================================
@@ -20,9 +23,6 @@ volatile long g_encoder_right_ticks = 0;
 
 static long g_last_left_ticks  = 0;
 static long g_last_right_ticks = 0;
-
-static PIDController g_pid_left_speed;
-static PIDController g_pid_right_speed;
 
 // ==========================================================
 // دوال الـ ISR - بتتنفذ عند كل نبضة من قناة A لكل إنكودر
@@ -42,12 +42,16 @@ void IRAM_ATTR isr_encoder_right() {
 // التهيئة
 // ==========================================================
 void motors_init() {
+    // تهيئة الـ PID للسرعة (مع تحديد الحد التكاملي 200.0)
+    pid_left = pid_create(SPEED_KP, SPEED_KI, SPEED_KD, 200.0);
+    pid_right = pid_create(SPEED_KP, SPEED_KI, SPEED_KD, 200.0);
+
     pinMode(MOTOR_L_IN1_PIN, OUTPUT);
     pinMode(MOTOR_L_IN2_PIN, OUTPUT);
     pinMode(MOTOR_R_IN1_PIN, OUTPUT);
     pinMode(MOTOR_R_IN2_PIN, OUTPUT);
     pinMode(MOTOR_STBY_PIN, OUTPUT);
-    digitalWrite(MOTOR_STBY_PIN, HIGH); // تفعيل الدرايفر (خروج من standby)
+    digitalWrite(MOTOR_STBY_PIN, HIGH); // خروج من وضع الـ standby
 
     ledcSetup(PWM_CHANNEL_L, PWM_FREQ_HZ, PWM_RESOLUTION);
     ledcSetup(PWM_CHANNEL_R, PWM_FREQ_HZ, PWM_RESOLUTION);
@@ -58,11 +62,9 @@ void motors_init() {
     pinMode(ENCODER_L_B_PIN, INPUT_PULLUP);
     pinMode(ENCODER_R_A_PIN, INPUT_PULLUP);
     pinMode(ENCODER_R_B_PIN, INPUT_PULLUP);
+    
     attachInterrupt(digitalPinToInterrupt(ENCODER_L_A_PIN), isr_encoder_left, RISING);
     attachInterrupt(digitalPinToInterrupt(ENCODER_R_A_PIN), isr_encoder_right, RISING);
-
-    g_pid_left_speed  = pid_create(SPEED_KP, SPEED_KI, SPEED_KD);
-    g_pid_right_speed = pid_create(SPEED_KP, SPEED_KI, SPEED_KD);
 
     motors_stop();
 }
@@ -135,11 +137,20 @@ float motors_get_right_distance_mm() {
 // تحكم سرعة closed-loop عن طريق PID
 // ==========================================================
 void motors_set_speed_mm_s(float left_target_mm_s, float right_target_mm_s, float dt) {
-    float left_measured  = motors_get_left_speed_mm_s(dt);
-    float right_measured = motors_get_right_speed_mm_s(dt);
+    // 1. حساب السرعة الفعلية الحالية
+    float current_left_speed = motors_get_left_speed_mm_s(dt);
+    float current_right_speed = motors_get_right_speed_mm_s(dt);
 
-    float left_pwm  = pid_compute(&g_pid_left_speed,  left_target_mm_s,  left_measured,  dt);
-    float right_pwm = pid_compute(&g_pid_right_speed, right_target_mm_s, right_measured, dt);
+    // 2. حساب قيمة التصحيح من متحكم الـ PID
+    float left_pwm = pid_compute(&pid_left, left_target_mm_s, current_left_speed, dt);
+    float right_pwm = pid_compute(&pid_right, right_target_mm_s, current_right_speed, dt);
 
+    // 3. التقليم (Saturation Clamping) لحماية مسجلات الهاردوير
+    if (left_pwm > 255.0f) left_pwm = 255.0f;
+    if (left_pwm < -255.0f) left_pwm = -255.0f;
+    if (right_pwm > 255.0f) right_pwm = 255.0f;
+    if (right_pwm < -255.0f) right_pwm = -255.0f;
+
+    // 4. إرسال الطاقة للمحركات
     motors_set_pwm((int)left_pwm, (int)right_pwm);
 }
