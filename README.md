@@ -1,8 +1,8 @@
 # IEEE-Victoris-Micromouse
 Software Architecture &amp; Maze Solving Algorithms for the Micromouse Robot competing in IEEE VICTORIS IV (Mansoura University). Developed by Momentum Team.\
-# IEEE Victoris IV - Micromouse Software Journey 🐁
+# IEEE Victoris V - Micromouse Software Journey 🐁
 
-This repository documents my engineering journey as the **Software Manager** for the Micromouse competition at **IEEE VICTORIS IV** (Mansoura University). 
+This repository documents my engineering journey as the **Software Manager** for the Micromouse competition at **IEEE VICTORIS V** (Mansoura University). 
 
 ## 🎯 Goals
 - Mastery of Embedded Systems software architecture.
