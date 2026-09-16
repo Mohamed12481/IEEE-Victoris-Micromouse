@@ -65,11 +65,6 @@ static bool bmi160_write_byte(uint8_t reg, uint8_t value) {
     return Wire.endTransmission(true) == 0;
 }
 
-// ==========================================================
-// قراءة حساس IR واحد مع إلغاء الضوء المحيط
-// بيقيس القراءة والـ emitter شغال، بعدين والـ emitter مطفي،
-// والفرق بينهم هو قيمة الانعكاس الحقيقية من الحيطة
-// ==========================================================
 static bool bmi160_write_and_verify(uint8_t reg, uint8_t value) {
     uint8_t readback = 0;
     return bmi160_write_byte(reg, value) &&
@@ -118,6 +113,9 @@ static bool bmi160_initialize() {
     return true;
 }
 
+// ==========================================================
+// قراءة حساس IR واحد مع إلغاء الضوء المحيط
+// ==========================================================
 static int read_ir_sensor(uint8_t tx_pin, uint8_t rx_pin) {
     digitalWrite(tx_pin, HIGH);
     delayMicroseconds(200);          // وقت استقرار الـ emitter
@@ -133,12 +131,8 @@ static int read_ir_sensor(uint8_t tx_pin, uint8_t rx_pin) {
 // التهيئة
 // ==========================================================
 void sensors_init() {
-    // بينات الـ IR
+    // بين باعثات الـ IR (MOSFET Gate)
     pinMode(IR_EMITTERS_PIN, OUTPUT);
-    pinMode(IR_EMITTERS_PIN, OUTPUT);
-    pinMode(IR_EMITTERS_PIN, OUTPUT);
-    digitalWrite(IR_EMITTERS_PIN, LOW);
-    digitalWrite(IR_EMITTERS_PIN, LOW);
     digitalWrite(IR_EMITTERS_PIN, LOW);
 
     // I2C للـ IMU
@@ -157,7 +151,7 @@ void sensors_init() {
 // ==========================================================
 IRReadings sensors_read_ir() {
     IRReadings r;
-    r.left  = read_ir_sensor(IR_EMITTERS_PIN,  IR_LEFT_RX_PIN);
+    r.left  = read_ir_sensor(IR_EMITTERS_PIN, IR_LEFT_RX_PIN);
     r.front = read_ir_sensor(IR_EMITTERS_PIN, IR_FRONT_RX_PIN);
     r.right = read_ir_sensor(IR_EMITTERS_PIN, IR_RIGHT_RX_PIN);
     return r;
@@ -192,7 +186,7 @@ IMUData sensors_read_imu() {
 }
 
 // ==========================================================
-// تكامل الجايروسكوب لحساب الـ yaw - استدعيها كل loop
+// تكامل الجايروسكوب لحساب الـ yaw
 // ==========================================================
 void sensors_update_yaw(float dt) {
     IMUData d = sensors_read_imu();
@@ -208,7 +202,7 @@ void sensors_reset_yaw() {
 }
 
 // ==========================================================
-// معايرة الجايروسكوب - لازم الروبوت يكون واقف ساكن تمامًا
+// معايرة الجايروسكوب
 // ==========================================================
 void sensors_calibrate_gyro() {
     if (!g_imu_ready) {
