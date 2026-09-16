@@ -1,57 +1,100 @@
+// ===== FILE: src/main.cpp =====
 #include <Arduino.h>
+#include "robot_config.h"
+#include "robot_hal.h"
+#include "hw_motors.h"
+#include "hw_sensors.h"
+#include "motion_control.h"
+#include "logic_wall_detection.h"
 
-// ==========================================================
-// دبابيس حساسات الـ IR مطابقة تماماً للـ PCB
-// ==========================================================
-#define IR_EMITTERS_PIN   4   // بوابة الـ MOSFET لتشغيل الباعثات
+extern "C" {
+    #include "maze_solver.h"
+}
 
-#define IR_LEFT_RX_PIN    34  // مستقبل يسار
-#define IR_FRONT_RX_PIN   35  // مستقبل أمامي
-#define IR_RIGHT_RX_PIN   32  // مستقبل يمين
+// Target center coordinates for 16x16 VictoRIS maze
+stPosition center_targets[] = {{7, 7}, {7, 8}, {8, 7}, {8, 8}};
 
-// دالة قراءة الحساس مع تطبيق إلغاء الضوء المحيط (Ambient Light Cancellation)
-int read_ir_sensor(uint8_t rx_pin, int &ambient_out, int &active_out) {
-    // 1. قراءة الضوء المحيط والـ Emitter مطفي
-    digitalWrite(IR_EMITTERS_PIN, LOW);
-    delayMicroseconds(200);
-    ambient_out = analogRead(rx_pin);
+// Current robot position and orientation
+stPosition current_pos = {0, 0};
+enDirection current_dir = DIR_NORTH;
 
-    // 2. قراءة الانعكاس والـ Emitter شغال
-    digitalWrite(IR_EMITTERS_PIN, HIGH);
-    delayMicroseconds(200);
-    active_out = analogRead(rx_pin);
-
-    // إطفاء الباعث لحفظ الطاقة وحمايته
-    digitalWrite(IR_EMITTERS_PIN, LOW);
-
-    // حساب القراءة الصافية (خصم الضوء المحيط)
-    int clean = ambient_out - active_out;
-    return (clean < 0) ? 0 : clean;
+// Update grid coordinates based on absolute heading
+void update_position_coordinates() {
+    switch (current_dir) {
+        case DIR_NORTH: current_pos.y++; break;
+        case DIR_EAST:  current_pos.x++; break;
+        case DIR_SOUTH: current_pos.y--; break;
+        case DIR_WEST:  current_pos.x--; break;
+    }
 }
 
 void setup() {
-    Serial.begin(115200);
-    delay(1000);
-    Serial.println("\n=== IR SENSORS LIVE DIAGNOSTIC TEST ===");
+    // 1. Initialize Hardware Abstraction Layer & Peripherals
+    HAL_init();
+    motors_init();
+    sensors_init(); // Initializes 3-Channel IR array & BMI160 IMU with auto-calibration
+    maze_init();
 
-    pinMode(IR_EMITTERS_PIN, OUTPUT);
-    digitalWrite(IR_EMITTERS_PIN, LOW);
+    Serial.println("==========================================");
+    Serial.println("   GREEN MOUSE - IEEE VICTORIS 5.0 RUN    ");
+    Serial.println("==========================================");
+    Serial.println("System Ready. Place robot in start cell...");
+    
+    delay(3000); // 3-second delay to position robot securely
 
-    pinMode(IR_LEFT_RX_PIN, INPUT);
-    pinMode(IR_FRONT_RX_PIN, INPUT);
-    pinMode(IR_RIGHT_RX_PIN, INPUT);
+    // ---------------------------------------------------
+    // Maze Exploration Run (Flood Fill Algorithm)
+    // ---------------------------------------------------
+    bool reached_center = false;
+
+    while (!reached_center) {
+        // Step 1: Check if any center goal cell is reached
+        for (int i = 0; i < 4; i++) {
+            if (current_pos.x == center_targets[i].x && current_pos.y == center_targets[i].y) {
+                reached_center = true;
+                break;
+            }
+        }
+        if (reached_center) break;
+
+        // Step 2: Read 3 IR Sensors (Left, Front, Right) with Ambient Light Cancellation
+        IRReadings ir = sensors_read_ir();
+
+        // Step 3: Map relative sensor readings to absolute orientation walls
+        WallDetectionResult walls = detect_walls(
+            current_dir, 
+            ir.front, ir.left, ir.right, 
+            IR_WALL_THRESHOLD_FRONT, IR_WALL_THRESHOLD_SIDE
+        );
+
+        // Step 4: Update internal maze bitfield matrix
+        maze_update_wall(current_pos.x, current_pos.y, walls.front_dir, walls.front_wall);
+        maze_update_wall(current_pos.x, current_pos.y, walls.left_dir, walls.left_wall);
+        maze_update_wall(current_pos.x, current_pos.y, walls.right_dir, walls.right_wall);
+
+        // Step 5: Recalculate Flood Fill distance matrix (BFS propagation)
+        flood_fill_recalculate(center_targets, 4);
+
+        // Step 6: Query algorithm for optimal neighboring move
+        enDirection next_move = maze_get_next_move(current_pos, current_dir);
+
+        // Step 7: Execute zero-radius turn (90° / 180°) using BMI160 Gyro integration
+        execute_turn(next_move);
+
+        // Step 8: Move forward one cell (175mm) using Encoders & IR PD Wall Centering
+        execute_forward_step();
+
+        // Step 9: Update internal positional coordinates
+        update_position_coordinates();
+    }
+
+    // Save explored maze data to ESP32 Flash Memory for Speed Run
+    HAL_save_data_to_flash("maze_map", (uint8_t*)maze, sizeof(maze));
+    Serial.println("Goal Reached! Maze mapped successfully & saved to Flash.");
 }
 
 void loop() {
-    int amb_L, act_L, amb_F, act_F, amb_R, act_R;
-
-    int clean_L = read_ir_sensor(IR_LEFT_RX_PIN, amb_L, act_L);
-    int clean_F = read_ir_sensor(IR_FRONT_RX_PIN, amb_F, act_F);
-    int clean_R = read_ir_sensor(IR_RIGHT_RX_PIN, amb_R, act_R);
-
-    // طباعة القراءات الصافية (CLEAN) لكل الحساسات والقراءات الخام (RAW) للحساس الأمامي
-    Serial.printf("CLEAN -> L: %4d | F: %4d | R: %4d  ||  RAW (Active/Ambient) F: %4d / %4d\n",
-                  clean_L, clean_F, clean_R, act_F, amb_F);
-
+    // Mission Complete: Halt all motor drives safely
+    motors_stop();
     delay(100);
 }
