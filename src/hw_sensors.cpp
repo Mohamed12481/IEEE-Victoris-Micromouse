@@ -1,3 +1,5 @@
+// ===== FILE: src/hw_sensors.cpp (MPU6050 Updated) =====
+
 #include "hw_sensors.h"
 #include "robot_config.h"
 #include "logic_imu.h"
@@ -5,140 +7,97 @@
 #include "logic_ir.h"
 #include <Wire.h>
 
-#define BMI160_REG_CHIP_ID       0x00
-#define BMI160_CHIP_ID           0xD1
-#define BMI160_REG_GYR_X_LSB     0x0C
-#define BMI160_REG_ACC_CONF      0x40
-#define BMI160_REG_ACC_RANGE     0x41
-#define BMI160_REG_GYR_CONF      0x42
-#define BMI160_REG_GYR_RANGE     0x43
-#define BMI160_REG_CMD           0x7E
-
-#define BMI160_CMD_ACC_NORMAL    0x11
-#define BMI160_CMD_GYR_NORMAL    0x15
-#define BMI160_CMD_SOFT_RESET    0xB6
-
-#define BMI160_ACC_CONF_100HZ    0x28
-#define BMI160_ACC_RANGE_2G      0x03
-#define BMI160_GYR_CONF_100HZ    0x28
-#define BMI160_GYR_RANGE_250DPS  0x03
-#define BMI160_GYRO_LSB_PER_DPS  131.2f
-#define BMI160_ACCEL_LSB_PER_G   16384.0f
-
 // ==========================================================
-// BMI160 IMU configuration and scaling.
+// MPU6050 Register Definitions & Scaling
 // ==========================================================
+#define MPU6050_ADDR            0x68
+#define MPU6050_PWR_MGMT_1      0x6B
+#define MPU6050_ACCEL_CONFIG    0x1C
+#define MPU6050_GYRO_CONFIG     0x1B
+#define MPU6050_ACCEL_XOUT_H    0x3B
+#define MPU6050_GYRO_XOUT_H     0x43
+
+#define MPU6050_GYRO_LSB_PER_DPS  131.0f  // Range +/-250 dps
+#define MPU6050_ACCEL_LSB_PER_G   16384.0f // Range +/-2g
 
 static float g_yaw = 0.0f;
 static float g_gyro_z_offset = 0.0f;
 static bool g_imu_ready = false;
 
-// قراءة عدد بايتات من رجستر معين
-static bool bmi160_read_bytes(uint8_t reg, uint8_t* buf, size_t len) {
+// دالة كتابة بايت لرجستر في MPU6050
+static bool mpu6050_write_byte(uint8_t reg, uint8_t value) {
     Wire.beginTransmission(IMU_I2C_ADDR);
     Wire.write(reg);
-    if (Wire.endTransmission(false) != 0) {
-        return false;
-    }
+    Wire.write(value);
+    return (Wire.endTransmission(true) == 0);
+}
+
+// دالة قراءة عدة بايتات متتالية من MPU6050
+static bool mpu6050_read_bytes(uint8_t reg, uint8_t* buf, size_t len) {
+    Wire.beginTransmission(IMU_I2C_ADDR);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) return false;
 
     size_t received = Wire.requestFrom((uint8_t)IMU_I2C_ADDR, len, true);
-    if (received != len) {
-        while (Wire.available()) {
-            Wire.read();
-        }
-        return false;
-    }
+    if (received != len) return false;
 
     for (size_t i = 0; i < len; i++) {
-        if (!Wire.available()) {
-            return false;
-        }
         buf[i] = Wire.read();
     }
     return true;
 }
 
-static bool bmi160_write_byte(uint8_t reg, uint8_t value) {
+// تهيئة حساس MPU6050 وإيقاف وضع النوم (Sleep Mode)
+static bool mpu6050_initialize() {
     Wire.beginTransmission(IMU_I2C_ADDR);
-    Wire.write(reg);
-    Wire.write(value);
-    return Wire.endTransmission(true) == 0;
-}
-
-static bool bmi160_write_and_verify(uint8_t reg, uint8_t value) {
-    uint8_t readback = 0;
-    return bmi160_write_byte(reg, value) &&
-           bmi160_read_bytes(reg, &readback, 1) &&
-           readback == value;
-}
-
-static bool bmi160_initialize() {
-    uint8_t chip_id = 0;
-
-    Wire.beginTransmission(IMU_I2C_ADDR);
-    if (Wire.endTransmission(true) != 0 ||
-        !bmi160_read_bytes(BMI160_REG_CHIP_ID, &chip_id, 1) ||
-        chip_id != BMI160_CHIP_ID) {
-        Serial.println("[BMI160] Device or CHIP_ID not found.");
+    if (Wire.endTransmission(true) != 0) {
+        Serial.println("[MPU6050] Device not found on I2C bus!");
         return false;
     }
 
-    if (!bmi160_write_byte(BMI160_REG_CMD, BMI160_CMD_SOFT_RESET)) {
-        Serial.println("[BMI160] Soft reset failed.");
+    // إيقاظ MPU6050 من وضع النوم (Power Management 1)
+    if (!mpu6050_write_byte(MPU6050_PWR_MGMT_1, 0x00)) {
+        Serial.println("[MPU6050] Wake up failed.");
         return false;
     }
-    delay(100);
+    delay(50);
 
-    if (!bmi160_write_byte(BMI160_REG_CMD, BMI160_CMD_ACC_NORMAL)) {
-        Serial.println("[BMI160] Accelerometer normal-mode command failed.");
-        return false;
-    }
-    delay(5);
+    // ضبط المدى (Gyro: +/-250 dps, Accel: +/-2g)
+    mpu6050_write_byte(MPU6050_GYRO_CONFIG, 0x00);
+    mpu6050_write_byte(MPU6050_ACCEL_CONFIG, 0x00);
 
-    if (!bmi160_write_byte(BMI160_REG_CMD, BMI160_CMD_GYR_NORMAL)) {
-        Serial.println("[BMI160] Gyroscope normal-mode command failed.");
-        return false;
-    }
-    delay(100);
-
-    if (!bmi160_write_and_verify(BMI160_REG_ACC_CONF, BMI160_ACC_CONF_100HZ) ||
-        !bmi160_write_and_verify(BMI160_REG_ACC_RANGE, BMI160_ACC_RANGE_2G) ||
-        !bmi160_write_and_verify(BMI160_REG_GYR_CONF, BMI160_GYR_CONF_100HZ) ||
-        !bmi160_write_and_verify(BMI160_REG_GYR_RANGE, BMI160_GYR_RANGE_250DPS)) {
-        Serial.println("[BMI160] Configuration verification failed.");
-        return false;
-    }
-
-    Serial.println("[BMI160] Initialized.");
+    Serial.println("[MPU6050] Initialized successfully.");
     return true;
 }
 
 // ==========================================================
-// قراءة حساس IR واحد مع إلغاء الضوء المحيط
+// قراءة حساس الـ IR
 // ==========================================================
 static int read_ir_sensor(uint8_t tx_pin, uint8_t rx_pin) {
     digitalWrite(tx_pin, HIGH);
-    delayMicroseconds(200);          // وقت استقرار الـ emitter
+    delayMicroseconds(500);
     int on_reading = analogRead(rx_pin);
+
     digitalWrite(tx_pin, LOW);
-    delayMicroseconds(200);
+    delayMicroseconds(500);
     int ambient_reading = analogRead(rx_pin);
 
     return cancel_ambient_light(on_reading, ambient_reading);
 }
 
-// ==========================================================
-// التهيئة
-// ==========================================================
 void sensors_init() {
-    // بين باعثات الـ IR (MOSFET Gate)
     pinMode(IR_EMITTERS_PIN, OUTPUT);
     digitalWrite(IR_EMITTERS_PIN, LOW);
 
-    // I2C للـ IMU
+    pinMode(IR_LEFT_RX_PIN, INPUT);
+    pinMode(IR_FRONT_RX_PIN, INPUT);
+    pinMode(IR_RIGHT_RX_PIN, INPUT);
+
+    // تهيئة الـ I2C للـ MPU6050
     Wire.begin(IMU_SDA_PIN, IMU_SCL_PIN);
     Wire.setClock(400000);
-    g_imu_ready = bmi160_initialize();
+    
+    g_imu_ready = mpu6050_initialize();
     delay(100);
 
     if (g_imu_ready) {
@@ -146,9 +105,6 @@ void sensors_init() {
     }
 }
 
-// ==========================================================
-// قراءة الـ IR الثلاثة
-// ==========================================================
 IRReadings sensors_read_ir() {
     IRReadings r;
     r.left  = read_ir_sensor(IR_EMITTERS_PIN, IR_LEFT_RX_PIN);
@@ -158,36 +114,37 @@ IRReadings sensors_read_ir() {
 }
 
 // ==========================================================
-// قراءة الـ IMU الخام (تسارع + جايروسكوب)
+// قراءة بيانات MPU6050 الخام (14 بايت: التسارع + الحرارة + الجايروسكوب)
 // ==========================================================
 IMUData sensors_read_imu() {
     IMUData d = {};
     d.yaw = g_yaw;
 
-    uint8_t buf[12];
-    if (!g_imu_ready || !bmi160_read_bytes(BMI160_REG_GYR_X_LSB, buf, sizeof(buf))) {
+    uint8_t buf[14];
+    if (!g_imu_ready || !mpu6050_read_bytes(MPU6050_ACCEL_XOUT_H, buf, sizeof(buf))) {
         return d;
     }
 
-    int raw_ax = imu_combine_bytes(buf[7], buf[6]);
-    int raw_ay = imu_combine_bytes(buf[9], buf[8]);
-    int raw_az = imu_combine_bytes(buf[11], buf[10]);
-    int raw_gx = imu_combine_bytes(buf[1], buf[0]);
-    int raw_gy = imu_combine_bytes(buf[3], buf[2]);
-    int raw_gz = imu_combine_bytes(buf[5], buf[4]);
+    // تجميع البايتات (Big-Endian في MPU6050: MSB أولاً ثم LSB)
+    int16_t raw_ax = (buf[0] << 8) | buf[1];
+    int16_t raw_ay = (buf[2] << 8) | buf[3];
+    int16_t raw_az = (buf[4] << 8) | buf[5];
+    
+    int16_t raw_gx = (buf[8] << 8) | buf[9];
+    int16_t raw_gy = (buf[10] << 8) | buf[11];
+    int16_t raw_gz = (buf[12] << 8) | buf[13];
 
-    d.ax = imu_raw_to_g(raw_ax, BMI160_ACCEL_LSB_PER_G);
-    d.ay = imu_raw_to_g(raw_ay, BMI160_ACCEL_LSB_PER_G);
-    d.az = imu_raw_to_g(raw_az, BMI160_ACCEL_LSB_PER_G);
-    d.gx = imu_raw_to_dps(raw_gx, BMI160_GYRO_LSB_PER_DPS);
-    d.gy = imu_raw_to_dps(raw_gy, BMI160_GYRO_LSB_PER_DPS);
-    d.gz = imu_raw_to_dps(raw_gz, BMI160_GYRO_LSB_PER_DPS) - g_gyro_z_offset;
+    d.ax = (float)raw_ax / MPU6050_ACCEL_LSB_PER_G;
+    d.ay = (float)raw_ay / MPU6050_ACCEL_LSB_PER_G;
+    d.az = (float)raw_az / MPU6050_ACCEL_LSB_PER_G;
+
+    d.gx = (float)raw_gx / MPU6050_GYRO_LSB_PER_DPS;
+    d.gy = (float)raw_gy / MPU6050_GYRO_LSB_PER_DPS;
+    d.gz = ((float)raw_gz / MPU6050_GYRO_LSB_PER_DPS) - g_gyro_z_offset;
+
     return d;
 }
 
-// ==========================================================
-// تكامل الجايروسكوب لحساب الـ yaw
-// ==========================================================
 void sensors_update_yaw(float dt) {
     IMUData d = sensors_read_imu();
     g_yaw = integrate_yaw(g_yaw, d.gz, dt);
@@ -202,7 +159,7 @@ void sensors_reset_yaw() {
 }
 
 // ==========================================================
-// معايرة الجايروسكوب
+// معايرة الجايروسكوب في حالة السكون
 // ==========================================================
 void sensors_calibrate_gyro() {
     if (!g_imu_ready) {
@@ -213,12 +170,13 @@ void sensors_calibrate_gyro() {
     const int samples = 200;
     float sum = 0.0f;
     int valid_samples = 0;
-    uint8_t buf[12];
+    uint8_t buf[6];
 
     for (int i = 0; i < samples; i++) {
-        if (bmi160_read_bytes(BMI160_REG_GYR_X_LSB, buf, sizeof(buf))) {
-            int raw_gz = imu_combine_bytes(buf[5], buf[4]);
-            sum += imu_raw_to_dps(raw_gz, BMI160_GYRO_LSB_PER_DPS);
+        // قراءة الـ Gyro Z مباشرة من رجستر 0x47
+        if (mpu6050_read_bytes(0x47, buf, 2)) {
+            int16_t raw_gz = (buf[0] << 8) | buf[1];
+            sum += ((float)raw_gz / MPU6050_GYRO_LSB_PER_DPS);
             valid_samples++;
         }
         delay(3);

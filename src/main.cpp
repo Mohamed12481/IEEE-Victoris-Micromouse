@@ -1,25 +1,127 @@
-// ===== FILE: src/main.cpp =====
+// ===== FILE: src/main.cpp (Autonomous Micromouse 16x16 - Competition Ready) =====
+
 #include <Arduino.h>
 #include "robot_config.h"
 #include "robot_hal.h"
 #include "hw_motors.h"
 #include "hw_sensors.h"
-#include "motion_control.h"
-#include "logic_wall_detection.h"
+#include "maze_solver.h"
 
-extern "C" {
-    #include "maze_solver.h"
-}
-
-// Target center coordinates for 16x16 VictoRIS maze
-stPosition center_targets[] = {{7, 7}, {7, 8}, {8, 7}, {8, 8}};
-
-// Current robot position and orientation
+// ==========================================================
+// 1. المتغيرات العامة للموقع والاتجاه
+// ==========================================================
 stPosition current_pos = {0, 0};
 enDirection current_dir = DIR_NORTH;
 
-// Update grid coordinates based on absolute heading
-void update_position_coordinates() {
+// خلايا المنتصف الأربع المحددة لهدف المتاهة 16x16
+stPosition goal_nodes[4] = {
+    {7, 7}, {7, 8}, {8, 7}, {8, 8}
+};
+
+// ==========================================================
+// 2. دوال الحركة الميكانيكية بالـ Encoders
+// ==========================================================
+
+// فرملة نشطة مشدودة لشريحة TB6612FNG لامتصاص القصور الذاتي للبطارية
+void motors_brake() {
+    digitalWrite(MOTOR_L_IN1_PIN, HIGH);
+    digitalWrite(MOTOR_L_IN2_PIN, HIGH);
+    digitalWrite(MOTOR_R_IN1_PIN, HIGH);
+    digitalWrite(MOTOR_R_IN2_PIN, HIGH);
+    ledcWrite(0, 255);
+    ledcWrite(1, 255);
+}
+
+// التقدم خلية واحدة 180 مم بخصم هامش القصور الذاتي (13 مم)
+void execute_forward_step(int pwm_speed = 135, float brake_margin_mm = 13.0f) {
+    encoder_reset();
+
+    motors_set_pwm(pwm_speed, pwm_speed);
+    float target_mm = 180.0f - brake_margin_mm;
+
+    while (motors_get_left_distance_mm() < target_mm) {
+        delay(2);
+    }
+
+    motors_brake();
+    delay(60);
+    motors_stop();
+    delay(150); // مهلة استقرار ميكانيكي قصيرة
+}
+
+// الدوران بالـ Encoders بناءً على أبعاد العجلتين (10 سم)
+void execute_turn_encoder(bool is_clockwise, float angle_deg, int pwm_speed = 120, float brake_margin_ticks = 18.0f) {
+    encoder_reset();
+
+    float ticks_per_mm = (619.0f / 180.0f); // ~3.4388 Ticks/mm
+    float turn_arc_90_mm = 78.54f;          // (PI / 2) * 50mm
+    float ticks_90_deg = turn_arc_90_mm * ticks_per_mm; // ~270 Ticks
+
+    float total_target_ticks = (angle_deg / 90.0f) * ticks_90_deg;
+    float target_ticks = total_target_ticks - brake_margin_ticks;
+
+    if (is_clockwise) {
+        motors_set_pwm(pwm_speed, -pwm_speed); // يمين
+    } else {
+        motors_set_pwm(-pwm_speed, pwm_speed); // يسار
+    }
+
+    while (abs(encoder_get_left_ticks()) < target_ticks) {
+        delay(2);
+    }
+
+    motors_brake();
+    delay(60);
+    motors_stop();
+    delay(150);
+}
+
+// ==========================================================
+// 3. قراءة الحساسات وتحديث حوائط الخوارزمية
+// ==========================================================
+void read_walls_and_update_maze() {
+    IRReadings ir = sensors_read_ir();
+
+    // مقارنة القراءات الصافية بـ thresholds المعايرة
+    bool wall_front = (ir.front > IR_WALL_THRESHOLD_FRONT);
+    bool wall_left  = (ir.left  > IR_WALL_THRESHOLD_SIDE);
+    bool wall_right = (ir.right > IR_WALL_THRESHOLD_SIDE);
+
+    // تحديث الحائط الأمامي
+    maze_update_wall(current_pos.x, current_pos.y, current_dir, wall_front);
+
+    // تحويل الاتجاهات النسبية إلى اتجاهات جغرافية مطلقة
+    enDirection right_dir = (enDirection)((current_dir + 1) % 4);
+    enDirection left_dir  = (enDirection)((current_dir + 3) % 4);
+
+    maze_update_wall(current_pos.x, current_pos.y, right_dir, wall_right);
+    maze_update_wall(current_pos.x, current_pos.y, left_dir, wall_left);
+}
+
+// ==========================================================
+// 4. توجيه الروبوت فيزيائياً للاتجاه التالي المختار
+// ==========================================================
+void move_robot_to_direction(enDirection next_dir) {
+    int diff = (next_dir - current_dir + 4) % 4;
+
+    if (diff == 1) {
+        // دوران 90 درجة يميناً
+        execute_turn_encoder(true, 90.0f, 120, 18.0f);
+    } else if (diff == 3) {
+        // دوران 90 درجة يساراً
+        execute_turn_encoder(false, 90.0f, 120, 18.0f);
+    } else if (diff == 2) {
+        // دوران 180 درجة (U-Turn)
+        execute_turn_encoder(true, 180.0f, 120, 25.0f);
+    }
+
+    // تحديث اتجاه الروبوت الحالي
+    current_dir = next_dir;
+
+    // التقدم خلية واحدة 180 مم
+    execute_forward_step(135, 13.0f);
+
+    // تحديث إحداثيات الموقع
     switch (current_dir) {
         case DIR_NORTH: current_pos.y++; break;
         case DIR_EAST:  current_pos.x++; break;
@@ -28,73 +130,57 @@ void update_position_coordinates() {
     }
 }
 
+// ==========================================================
+// 5. التهيئة Setup
+// ==========================================================
 void setup() {
-    // 1. Initialize Hardware Abstraction Layer & Peripherals
+    Serial.begin(115200);
+
+    // تهيئة الهاردوير والمحركات والمستشعرات
     HAL_init();
     motors_init();
-    sensors_init(); // Initializes 3-Channel IR array & BMI160 IMU with auto-calibration
+    sensors_init();
+    motors_stop();
+
+    // تهيئة المتاهة وخوارزمية Flood Fill لمتاهة 16x16
     maze_init();
+    flood_fill_recalculate(goal_nodes, 4);
 
-    Serial.println("==========================================");
-    Serial.println("   GREEN MOUSE - IEEE VICTORIS 5.0 RUN    ");
-    Serial.println("==========================================");
-    Serial.println("System Ready. Place robot in start cell...");
-    
-    delay(3000); // 3-second delay to position robot securely
+    Serial.println("\n=============================================");
+    Serial.println("  AUTONOMOUS MICROMOUSE READY - STARTING IN 3S ");
+    Serial.println("=============================================");
 
-    // ---------------------------------------------------
-    // Maze Exploration Run (Flood Fill Algorithm)
-    // ---------------------------------------------------
-    bool reached_center = false;
-
-    while (!reached_center) {
-        // Step 1: Check if any center goal cell is reached
-        for (int i = 0; i < 4; i++) {
-            if (current_pos.x == center_targets[i].x && current_pos.y == center_targets[i].y) {
-                reached_center = true;
-                break;
-            }
-        }
-        if (reached_center) break;
-
-        // Step 2: Read 3 IR Sensors (Left, Front, Right) with Ambient Light Cancellation
-        IRReadings ir = sensors_read_ir();
-
-        // Step 3: Map relative sensor readings to absolute orientation walls
-        WallDetectionResult walls = detect_walls(
-            current_dir, 
-            ir.front, ir.left, ir.right, 
-            IR_WALL_THRESHOLD_FRONT, IR_WALL_THRESHOLD_SIDE
-        );
-
-        // Step 4: Update internal maze bitfield matrix
-        maze_update_wall(current_pos.x, current_pos.y, walls.front_dir, walls.front_wall);
-        maze_update_wall(current_pos.x, current_pos.y, walls.left_dir, walls.left_wall);
-        maze_update_wall(current_pos.x, current_pos.y, walls.right_dir, walls.right_wall);
-
-        // Step 5: Recalculate Flood Fill distance matrix (BFS propagation)
-        flood_fill_recalculate(center_targets, 4);
-
-        // Step 6: Query algorithm for optimal neighboring move
-        enDirection next_move = maze_get_next_move(current_pos, current_dir);
-
-        // Step 7: Execute zero-radius turn (90° / 180°) using BMI160 Gyro integration
-        execute_turn(next_move);
-
-        // Step 8: Move forward one cell (175mm) using Encoders & IR PD Wall Centering
-        execute_forward_step();
-
-        // Step 9: Update internal positional coordinates
-        update_position_coordinates();
-    }
-
-    // Save explored maze data to ESP32 Flash Memory for Speed Run
-    HAL_save_data_to_flash("maze_map", (uint8_t*)maze, sizeof(maze));
-    Serial.println("Goal Reached! Maze mapped successfully & saved to Flash.");
+    // مهلة 3 ثوانٍ لوضع الروبوت في خلية البداية (0,0) وسحب اليد
+    delay(3000); 
 }
 
+// ==========================================================
+// 6. حلقة التحكم الرئيسية Loop
+// ==========================================================
 void loop() {
-    // Mission Complete: Halt all motor drives safely
-    motors_stop();
-    delay(100);
+    // 1. التحقق من الوصول لأحد خلايا الهدف الأربع (Distance == 0)
+    if (maze[current_pos.x][current_pos.y].distance == 0) {
+        motors_stop();
+        Serial.println("\n[SUCCESS] TARGET GOAL REACHED!");
+
+        // التوقف النهائي لحسم المسابقة من المحاولة الأولى
+        while (true) {
+            motors_stop();
+            delay(1000);
+        }
+    }
+
+    // 2. قراءة الحساسات وتحديث خريطة الحوائط
+    read_walls_and_update_maze();
+
+    // 3. إعادة حساب قيم المسافات لخوارزمية Flood Fill
+    flood_fill_recalculate(goal_nodes, 4);
+
+    // 4. اختيار الاتجاه القادم الأقل مسافة (مع ترجيح الأمام عند التساوي)
+    enDirection next_dir = maze_get_next_move(current_pos, current_dir);
+
+    // 5. تنفيذ الحركة الفيزيائية للخلية التالية
+    move_robot_to_direction(next_dir);
+
+    delay(100); // مهلة استقرار ميكانيكي بين الخلايا
 }

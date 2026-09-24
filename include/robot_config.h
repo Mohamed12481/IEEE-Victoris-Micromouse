@@ -23,9 +23,9 @@
 // ==========================================================
 #define WHEEL_DIAMETER_MM      34.0   
 #define WHEEL_BASE_MM          100.0  
-#define ENCODER_TICKS_PER_REV  210.0  // (7 PPR * 30 Gear Ratio)
-#define D_TICKS                0.508  
-#define TICKS_PER_CELL         354    
+#define ENCODER_TICKS_PER_REV  366.5  // (7 PPR * 30 Gear Ratio)
+#define D_TICKS                0.291  
+#define TICKS_PER_CELL         617    
 
 // ==========================================================
 // بينات الموتور - TB6612FNG (مطابقة 100% للسكيماتيك)
@@ -35,8 +35,8 @@
 #define MOTOR_L_IN2_PIN   25  // AIN2
 
 #define MOTOR_R_PWM_PIN   13  // PWMB
-#define MOTOR_R_IN1_PIN   27  // BIN1 (تم التصحيح حسب السكيماتيك)
-#define MOTOR_R_IN2_PIN   14  // BIN2 (تم التصحيح حسب السكيماتيك)
+#define MOTOR_R_IN1_PIN   14  // BIN1 (تم التصحيح حسب السكيماتيك)
+#define MOTOR_R_IN2_PIN   27  // BIN2 (تم التصحيح حسب السكيماتيك)
 
 // ==========================================================
 // إنكودر العجلتين
@@ -62,7 +62,7 @@
 // ==========================================================
 #define IMU_SDA_PIN    21
 #define IMU_SCL_PIN    22
-#define IMU_I2C_ADDR   0x69
+#define IMU_I2C_ADDR    0x68
 
 // ==========================================================
 // ثوابت PID - للـ Tuning في المعمل
